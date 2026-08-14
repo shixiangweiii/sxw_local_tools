@@ -1,0 +1,18 @@
+appId: com.jsonparse.app
+productName: JSON Parse
+directories:
+  buildResources: resources
+  output: dist
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+  icon: resources/icon.icns
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
