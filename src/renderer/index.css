@@ -52,17 +52,22 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Markdown preview: keep code blocks readable in dark mode (hljs github theme is light-only) */
+/* Markdown 预览代码块配色。
+   typography 的 pre 是「深底(--tw-prose-pre-bg) + 浅字(--tw-prose-pre-code)」配对样式，
+   这里既然把底色改成浅灰，字色就必须一并显式指定，否则亮色模式下是 #e5e7eb 浅字压 #f3f4f6 浅底。
+
+   字色写在 code 选择器上（权重 0,2,2），不依赖 hljs 主题的 .hljs{color}（权重 0,1,0，
+   与 typography 的 pre code{color:inherit} 同权重、只能靠样式加载顺序决胜）：
+   - 无语言标签的围栏块不会被 rehype-highlight 加上 .hljs，本来就拿不到主题字色；
+   - 有语言的块即便打包顺序变化也不会退回浅字。
+   高亮 token 的颜色由 .hljs-* 作用在子 span 上，不受这条规则影响。 */
 .markdown-preview-root .prose pre {
   @apply bg-gray-100 dark:bg-gray-800;
 }
 .markdown-preview-root .prose pre code,
 .markdown-preview-root .prose pre code.hljs {
   background: transparent;
-}
-.dark .markdown-preview-root .prose pre code,
-.dark .markdown-preview-root .prose pre code.hljs {
-  @apply text-gray-100;
+  @apply text-gray-800 dark:text-gray-100;
 }
 
 /* Mermaid 灯箱：解除 mermaid 默认 max-width，确保 transform 缩放生效（宽高由组件按 viewBox 显式设置） */

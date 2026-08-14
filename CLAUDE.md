@@ -11,51 +11,88 @@ npm run preview   # Run the built app
 npm run package   # Build + package macOS .dmg into dist/
 ```
 
-No test runner or linter is configured. Type-checking happens as part of `npm run build` via electron-vite (uses `tsconfig.node.json` for main/preload and `tsconfig.web.json` for renderer).
+No test runner or linter is configured — `npm run build` (type-check + build) is the only verification. Type-checking uses `tsconfig.node.json` for main/preload/shared and `tsconfig.web.json` for renderer/shared.
+
+`.npmrc` pins the registry and the Electron/electron-builder binary mirrors to npmmirror because the lockfile originated on an internal registry. Don't replace it with the public npmjs registry.
+
+`AGENTS.md` is a condensed copy of this file for other agents; keep the two consistent when architecture notes change.
 
 ## Architecture
 
 Three-process Electron app (electron-vite) with a strict process boundary:
 
-- **`src/main/`** — Node-side. `index.ts` boots the app and builds the menu; `window.ts` creates `BrowserWindow` instances (titleBarStyle `hiddenInset`, contextIsolation on, nodeIntegration off); `ipc.ts` registers handlers for file open/save and new-window.
-- **`src/preload/index.ts`** — Exposes a minimal `electronAPI` (`openFile`, `saveFile`, `newWindow`) on `window` via `contextBridge`. All renderer↔main communication goes through this surface; channel names live in `src/shared/constants.ts`.
-- **`src/renderer/`** — React 18 + Zustand + Monaco + Tailwind UI. Path alias `@` → `src/renderer` (configured in `electron.vite.config.ts`).
+- **`src/main/`** — `index.ts` boots the app and rebuilds the menu whenever the window set changes; `window.ts` creates `BrowserWindow`s (`hiddenInset` title bar, contextIsolation on, nodeIntegration off) and stashes each new window's inherited config in `pendingConfigs`; `windowManager.ts` owns window registry, numbering and title composition; `ipc.ts` registers the handlers.
+- **`src/preload/index.ts`** — exposes `electronAPI` (`openFile`, `saveFile`, `newWindow`, `setWindowTitle`, `getInitConfig`) via `contextBridge`. This is the entire renderer↔main surface; channel names live in `src/shared/constants.ts`.
+- **`src/renderer/`** — React 18 + Zustand + Monaco + Tailwind. Path alias `@` → `src/renderer` (`electron.vite.config.ts`); renderer workers are bundled as ES modules (`worker.format: 'es'`).
 
-### JSON processing pipeline (the part worth reading multiple files to understand)
+### Three editor modes share one window
 
-All JSON work happens in a dedicated Web Worker (`src/renderer/workers/json.worker.ts`) accessed through the `useJsonWorker` hook (`src/renderer/hooks/useJsonWorker.ts`). The worker is **stateful** — it holds `workerTree` (the canonical parsed tree, including lazy subtrees) and a `lazyValueStore` Map. The renderer's Zustand store only mirrors a *projection* of this tree.
+`uiSlice.editorMode` is `'json' | 'markdown' | 'html'`, toggled from the Toolbar. Each mode has its **own text buffer and its own file path** — `rawText` / `markdownText` / `htmlText`, and `filePathByMode`. Switching modes never converts content between buffers.
 
-Key consequences:
-- The worker is the source of truth for serializing back to JSON text (`stringify` action walks `workerTree`, splicing in `lazyValueStore` raw values).
-- Every tree mutation (`editNode`, `addNode`, `addJsonNode`, `deleteNode`) must be sent to the worker so its mirror stays in sync — otherwise `stringify` produces stale output.
-- **Lazy parsing**: `parse` chooses `maxDepth` based on input size (2 for >1MB, 4 for >100KB, 100 otherwise). Deeper subtrees are stashed in `lazyValueStore` and materialized on `expand`. This is what makes large files openable.
-- **Auto-expand** only fires when `allIds.length <= 200` (see `App.tsx`); larger trees stay collapsed.
+The left pane is a single `MonacoEditor` instance reused across modes (`components/editor/MonacoEditor.tsx`). Two things keep it in sync:
 
-Search runs in a separate worker (`src/renderer/workers/search.worker.ts`) via `useSearchWorker`.
+- A `useStore.subscribe` with an explicit `equalityFn` pushes *external* text changes into the editor (`setValue` guarded by `isUpdatingFromExternal`). Which field it watches depends on `editorMode`.
+- A `mode`-keyed effect flushes the pending debounce and swaps the editor content to the new mode's buffer. Without that flush, a keystroke in one mode lands in the next mode's buffer.
+
+`App.handleEditorChange` routes by mode: markdown → `setMarkdownText` inside `startTransition`; html → `setHtmlText` + `sanitizeHtml` inside `startTransition`; json → the parse pipeline below. The right pane is TreeView (json), `MarkdownPreview` (markdown) or `HtmlSanitizedView` (html).
+
+### JSON processing pipeline (worth reading several files to understand)
+
+All JSON work happens in a dedicated Web Worker (`workers/json.worker.ts`) reached through `hooks/useJsonWorker.ts`. The worker is **stateful** — it holds `workerTree` (the canonical parsed tree) plus a `lazyValueStore` Map of unmaterialized raw subtrees. The Zustand store holds only a projection of that tree.
+
+Consequences:
+- The worker is the source of truth for serializing back to JSON (`stringify` walks `workerTree`, splicing in `lazyValueStore` raw values). `TreeView.syncTreeToEditor` calls it and only falls back to main-thread `treeToJson` when the tree provably has no lazy nodes.
+- Every tree mutation (`editNode`, `addNode`, `addJsonNode`, `deleteNode`) must also be sent to the worker so its mirror stays in sync — otherwise `stringify` returns stale output. `TreeView` fires these as unawaited promises alongside the main-thread `treeHelpers` update; both sides must apply the same change.
+- **Lazy parsing**: `parse` picks `maxDepth` from input size (2 for >1MB, 4 for >100KB, else 100). Deeper subtrees go to `lazyValueStore` and are materialized on `expand` (two more levels at a time).
+- **Auto-expand** only fires when `allIds.length <= 200` (`App.tsx`); larger trees stay collapsed.
+- `useJsonWorker.parse` calls `cancelPending`, which *rejects* every in-flight request — including unrelated ones. Callers must tolerate a `cancelled` rejection.
+
+Search runs in a separate worker (`workers/search.worker.ts`) via `useSearchWorker`, in text mode (substring/regex, debounced 200ms) or JSONPath mode (`jsonpath-plus`, triggered by Enter). JSONPath is evaluated against `store.rawText`, not the tree, because lazy nodes make the tree incomplete; results come back as JSON Pointers and are resolved to node ids by walking the tree.
 
 ### Editor ↔ Tree bidirectional sync (loop prevention)
 
-The Monaco editor (left) and the TreeView (right) are both editable and both feed into `store.rawText`. To prevent infinite update loops:
+In JSON mode the Monaco editor and the TreeView are both editable and both write `store.rawText`:
 
 - `setRawText(text, source)` records `syncSource` as `'editor'` or `'tree'`.
-- In `App.handleEditorChange`, if `syncSource === 'tree'` the editor change is ignored (it was caused by tree edits propagating back).
-- Editor input is debounced 300ms before re-parsing.
-- `parseVersionRef` in `App.tsx` gates async parse results — only the latest version is applied, older parses are dropped (stale check).
+- `App.handleEditorChange` returns early when `syncSource === 'tree'` (the change was tree edits propagating back).
+- Editor input is debounced by size: 300ms, 500ms >100KB, 800ms >1MB.
+- `parseVersionRef` in `App.tsx` gates async parse results — only the latest version is applied.
 
-When changing this flow, preserve both the `syncSource` guard and the version counter.
+Preserve both the `syncSource` guard and the version counter when touching this flow.
+
+### Markdown preview performance system
+
+`components/markdown/perfThresholds.ts` is the single source of truth for every size limit; Toolbar, `MarkdownTextSubscriber` and MonacoEditor all read from it. `pickStrategy(byteLength)` returns:
+
+- `live` (<300KB) — `commitMarkdownPreview()` runs automatically in a transition.
+- `manual` (300KB–5MB) — the preview only updates when the user clicks refresh in the Toolbar; `markdownPreviewText` deliberately lags `markdownText`.
+- `disabled` (≥5MB) — the preview pane is replaced by a notice.
+
+So the preview always renders `markdownPreviewText`, never `markdownText`. `MarkdownPreview` is `React.lazy` so mermaid/react-markdown stay out of the main chunk and never load in JSON mode. `MermaidBlock` adds viewport-lazy rendering (IntersectionObserver), a global lazy-loaded mermaid singleton re-initialized on theme change, a `MERMAID_MAX_CONCURRENCY` semaphore, and a per-block size cap. Tables over 100 rows render incrementally via `LazyTable`.
+
+### HTML mode
+
+`utils/htmlSanitize.ts` is not a security sanitizer — it's an aggressive structure extractor aimed at RAG/LLM input: a minimal attribute allowlist, a tag blacklist (nav/header/footer/forms/media/embeds), unwrapping of decorative and single-child containers, short-text-container heuristics, and empty-element pruning. It deliberately only *removes* wrappers, reconstructing `<html>/<head>/<body>` in the output only if the input had them. The right pane shows the result in a read-only Monaco; "复制为 MD" converts it with turndown + GFM (`utils/htmlToMarkdown.ts`).
+
+### Window titles and config inheritance
+
+Titles are assembled in the main process, never by the renderer. The renderer reports `{ filePath, theme, editorMode }` through `setWindowTitle` on every relevant change; `windowManager.updateWindowConfig` applies theme/mode first, then `setWindowFilePath` recomputes **all** window titles (filename-only, with a window number appended only when two windows show the same basename). Config must be applied before the title recompute or the title lags a mode switch by one tick.
+
+New windows inherit `{ theme, editorMode }` from the focused window — but never `filePath`, which is why filePath is kept outside `WindowConfig`. The child reads it once via `getInitConfig` (`consumePendingConfig` deletes it) and also learns its window number there.
 
 ### State management
 
-Zustand store split into two slices, composed in `src/renderer/store/index.ts` with the `subscribeWithSelector` middleware:
+Zustand store composed in `store/index.ts` with `subscribeWithSelector`:
 
-- `jsonSlice.ts` — `rawText`, `parsedTree`, `validationErrors`, `expandedIds`, `syncSource` and their setters.
-- `uiSlice.ts` — theme, search query/options, matched IDs, current match index, toast.
+- `jsonSlice.ts` — `rawText`, `parsedTree`, `validationErrors`, `expandedIds`, `syncSource`.
+- `uiSlice.ts` — everything else: theme, wordWrap, window number, search query/options/matches, toast, `editorMode`, `filePathByMode`, markdown buffers + byte length, html buffers, preview fullscreen, TOC visibility.
 
-Types for the combined store live in `store/types.ts` as `StoreState = JsonSlice & UiSlice`.
+Combined type is `StoreState = JsonSlice & UiSlice` in `store/types.ts`.
 
 ## Conventions
 
-- UI strings and menu labels are Chinese (zh-CN). Match existing tone when adding new copy.
-- macOS-first: shortcuts use `Cmd`, the menu uses `hiddenInset` chrome, `npm run package` only builds `--mac`.
-- Tailwind with dark-mode `class` strategy — toggle via `document.documentElement.classList.toggle('dark', ...)` driven by the store's `theme`.
-- When adding worker actions, update the `WorkerMessage` union in `json.worker.ts` AND add a wrapper in `useJsonWorker.ts` — the hook is the only place renderer code talks to the worker.
+- UI strings, menu labels, code comments and commit messages are Chinese (zh-CN). Match the existing tone when adding copy.
+- macOS-first: `Cmd` shortcuts, `hiddenInset` chrome (`.titlebar-drag` / `.titlebar-no-drag` classes in the Toolbar), `npm run package` builds `--mac` only.
+- Tailwind with the `class` dark-mode strategy, toggled by `document.documentElement.classList.toggle('dark', ...)` from the store's `theme`.
+- When adding a worker action, update the `WorkerMessage` union in `json.worker.ts` **and** add a wrapper in `useJsonWorker.ts` — the hook is the only place renderer code talks to the worker.
+- New size/perf limits belong in `perfThresholds.ts`, not inline in components.
