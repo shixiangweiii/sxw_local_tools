@@ -70,6 +70,57 @@ body {
   @apply text-gray-800 dark:text-gray-100;
 }
 
+/* 暗色模式下的语法高亮配色。
+   MarkdownPreviewImpl 只引入了 highlight.js 的 github.css（亮色主题），它的 token 颜色是按白底
+   挑的，换到暗色底上就失效：字符串 #032f62 压在 gray-800 上对比度只有约 1.1:1，几乎看不见。
+   下面按 highlight.js v11 github-dark 的调色板逐组覆盖，分组与原主题一一对应（含 addition /
+   deletion 的背景色，它们在亮色主题里是近白色）。
+   前缀 .dark .markdown-preview-root 为 (0,2,0)，胜出不依赖样式加载顺序；:is() 取参数中的最高
+   权重，各组之间的相对权重关系与原主题保持一致。 */
+.dark .markdown-preview-root :is(.hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword,
+  .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_) {
+  color: #ff7b72;
+}
+.dark .markdown-preview-root :is(.hljs-title, .hljs-title.class_,
+  .hljs-title.class_.inherited__, .hljs-title.function_) {
+  color: #d2a8ff;
+}
+.dark .markdown-preview-root :is(.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta,
+  .hljs-number, .hljs-operator, .hljs-variable, .hljs-selector-attr, .hljs-selector-class,
+  .hljs-selector-id) {
+  color: #79c0ff;
+}
+.dark .markdown-preview-root :is(.hljs-regexp, .hljs-string, .hljs-meta .hljs-string) {
+  color: #a5d6ff;
+}
+.dark .markdown-preview-root :is(.hljs-built_in, .hljs-symbol) {
+  color: #ffa657;
+}
+.dark .markdown-preview-root :is(.hljs-comment, .hljs-code, .hljs-formula) {
+  color: #8b949e;
+}
+.dark .markdown-preview-root :is(.hljs-name, .hljs-quote, .hljs-selector-tag,
+  .hljs-selector-pseudo) {
+  color: #7ee787;
+}
+.dark .markdown-preview-root :is(.hljs-subst, .hljs-emphasis, .hljs-strong) {
+  color: #c9d1d9;
+}
+.dark .markdown-preview-root .hljs-section {
+  color: #1f6feb;
+}
+.dark .markdown-preview-root .hljs-bullet {
+  color: #f2cc60;
+}
+.dark .markdown-preview-root .hljs-addition {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+.dark .markdown-preview-root .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
+}
+
 /* Mermaid 灯箱：解除 mermaid 默认 max-width，确保 transform 缩放生效（宽高由组件按 viewBox 显式设置） */
 .mermaid-zoom-layer svg {
   max-width: none !important;
