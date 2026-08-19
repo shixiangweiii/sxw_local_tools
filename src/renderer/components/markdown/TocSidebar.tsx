@@ -141,12 +141,12 @@ export const TocSidebar = memo(function TocSidebar({ headings, scrollContainer }
   }, [headings, scrollContainer])
 
   const handleClick = useCallback((id: string) => {
-    const el = document.getElementById(id)
+    const el = scrollContainer?.querySelector(`#${CSS.escape(id)}`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
       setActiveId(id)
     }
-  }, [])
+  }, [scrollContainer])
 
   const handleToggleCollapse = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation()

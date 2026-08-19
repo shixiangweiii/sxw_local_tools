@@ -1,4 +1,4 @@
-import { Suspense, startTransition, useCallback, useEffect, useMemo, useRef } from 'react'
+import { Suspense, startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from './store'
 import { Toolbar } from './components/Toolbar'
 import { SplitPanel } from './components/SplitPanel'
@@ -9,7 +9,7 @@ import { MarkdownPreview } from './components/markdown/MarkdownPreview'
 import { TocSidebar } from './components/markdown/TocSidebar'
 import { HtmlSanitizedView } from './components/html/HtmlSanitizedView'
 import { formatBytes, pickStrategy } from './components/markdown/perfThresholds'
-import { parseHeadings } from './utils/tocParser'
+import type { HeadingItem } from './utils/tocParser'
 import { useJsonWorker } from './hooks/useJsonWorker'
 import { sanitizeHtml } from './utils/htmlSanitize'
 
@@ -297,7 +297,8 @@ function MarkdownTextSubscriber(): JSX.Element {
   const isTocVisible = useStore((s) => s.isTocVisible)
   const markdownByteLength = useStore((s) => s.markdownByteLength)
   const strategy = pickStrategy(markdownByteLength)
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const [headings, setHeadings] = useState<HeadingItem[]>([])
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null)
 
   // live 模式下自动提交快照；manual / disabled 不自动提交
   useEffect(() => {
@@ -308,8 +309,22 @@ function MarkdownTextSubscriber(): JSX.Element {
     }
   }, [markdownText, strategy, commitMarkdownPreview])
 
-  // 解析标题列表
-  const headings = useMemo(() => parseHeadings(markdownPreviewText), [markdownPreviewText])
+  const handleHeadingsChange = useCallback((nextHeadings: HeadingItem[]) => {
+    setHeadings((previousHeadings) => {
+      if (
+        previousHeadings.length === nextHeadings.length &&
+        previousHeadings.every((heading, index) => {
+          const nextHeading = nextHeadings[index]
+          return heading.id === nextHeading.id &&
+            heading.text === nextHeading.text &&
+            heading.level === nextHeading.level
+        })
+      ) {
+        return previousHeadings
+      }
+      return nextHeadings
+    })
+  }, [])
 
   if (strategy === 'disabled') {
     return (
@@ -326,10 +341,10 @@ function MarkdownTextSubscriber(): JSX.Element {
   return (
     <div className="h-full flex">
       {isTocVisible && headings.length > 0 && (
-        <TocSidebar headings={headings} scrollContainer={scrollRef.current} />
+        <TocSidebar headings={headings} scrollContainer={scrollContainer} />
       )}
-      <div className="flex-1 overflow-hidden" ref={scrollRef}>
-        <MarkdownPreview text={markdownPreviewText} />
+      <div className="flex-1 overflow-hidden" ref={setScrollContainer}>
+        <MarkdownPreview text={markdownPreviewText} onHeadingsChange={handleHeadingsChange} />
       </div>
     </div>
   )

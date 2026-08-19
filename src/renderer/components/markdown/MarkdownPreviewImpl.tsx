@@ -1,46 +1,18 @@
-import { memo, useDeferredValue, useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
+import { memo, useDeferredValue, useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { Components } from 'react-markdown'
 import { MermaidBlock } from './MermaidBlock'
-import { slugify } from '../../utils/tocParser'
+import { createHeadingCollector, type HeadingItem } from '../../utils/tocParser'
 import 'highlight.js/styles/github.css'
 
 // 模块级稳定引用，避免每次渲染都新建数组导致 react-markdown 内部 effect 失效
-const REMARK_PLUGINS = [remarkGfm]
 const REHYPE_PLUGINS = [rehypeHighlight]
-
-/** 从 React children 中递归提取纯文本 */
-function extractText(children: ReactNode): string {
-  if (typeof children === 'string') return children
-  if (typeof children === 'number') return String(children)
-  if (Array.isArray(children)) return children.map(extractText).join('')
-  if (children && typeof children === 'object' && 'props' in children) {
-    return extractText((children as { props: { children?: ReactNode } }).props.children)
-  }
-  return ''
-}
-
-// 用于处理重复标题的 id 后缀计数器，每次渲染前重置
-let headingIdCounts: Map<string, number> = new Map()
 
 interface MarkdownPreviewImplProps {
   text: string
-}
-
-/** 创建带 id 的 heading 组件 */
-function makeHeading(level: number) {
-  const Tag = `h${level}` as keyof JSX.IntrinsicElements
-  return function HeadingComponent({ children }: { children?: ReactNode }) {
-    const text = extractText(children)
-    let id = slugify(text)
-    // 处理重复 id
-    const count = headingIdCounts.get(id) ?? 0
-    if (count > 0) id = `${id}-${count}`
-    headingIdCounts.set(id, count + 1)
-    return <Tag id={id}>{children}</Tag>
-  }
+  onHeadingsChange: (headings: HeadingItem[]) => void
 }
 
 const LAZY_TABLE_INITIAL = 50
@@ -118,7 +90,7 @@ function LazyTableInner({ thead, allRows }: { thead: ReactNode; allRows: ReactNo
 
 /**
  * 自定义 code 渲染：拦截 ```mermaid 代码块，其余交给 rehype-highlight 默认渲染。
- * 同时自定义 h1-h6 为标题添加锚点 id。
+ * 标题锚点由 remark heading collector 直接写入 AST。
  */
 const components: Components = {
   table: LazyTable,
@@ -135,13 +107,7 @@ const components: Components = {
         {children}
       </code>
     )
-  },
-  h1: makeHeading(1),
-  h2: makeHeading(2),
-  h3: makeHeading(3),
-  h4: makeHeading(4),
-  h5: makeHeading(5),
-  h6: makeHeading(6)
+  }
 }
 
 /**
@@ -151,12 +117,19 @@ const components: Components = {
  * - 顶部"渲染中"条状提示让用户感知后台进度
  * - React.memo 包裹整个组件，prop 等值即跳过
  */
-function MarkdownPreviewImpl({ text }: MarkdownPreviewImplProps): JSX.Element {
+function MarkdownPreviewImpl({ text, onHeadingsChange }: MarkdownPreviewImplProps): JSX.Element {
   const deferred = useDeferredValue(text)
   const isPending = deferred !== text
+  const headingCollector = useMemo(() => createHeadingCollector(), [deferred])
+  const remarkPlugins = useMemo(
+    () => [remarkGfm, headingCollector.plugin],
+    [headingCollector]
+  )
 
-  // 每次渲染前重置 heading id 计数器
-  headingIdCounts = new Map()
+  // ReactMarkdown 已同步完成本轮 AST 转换；提交后再把同一批标题交给 TOC。
+  useEffect(() => {
+    onHeadingsChange([...headingCollector.headings])
+  }, [headingCollector, onHeadingsChange])
 
   return (
     <div className="markdown-preview-root h-full overflow-auto bg-white dark:bg-gray-900 relative">
@@ -167,7 +140,7 @@ function MarkdownPreviewImpl({ text }: MarkdownPreviewImplProps): JSX.Element {
       )}
       <article className="prose prose-sm dark:prose-invert max-w-none p-6">
         {deferred.trim() ? (
-          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
+          <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={REHYPE_PLUGINS} components={components}>
             {deferred}
           </ReactMarkdown>
         ) : (
