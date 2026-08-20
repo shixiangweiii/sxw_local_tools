@@ -1,9 +1,13 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import { createWindow } from './window'
 import { registerIpcHandlers } from './ipc'
+import { registerSchemePrivileges, registerLocalResourceProtocol } from './protocol'
 import { getWindowList, focusWindow, onWindowsChange, getFocusedWindowConfig } from './windowManager'
 
 const isDev = !app.isPackaged
+
+// 协议特权声明必须在 app ready 之前
+registerSchemePrivileges()
 
 function buildMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -76,6 +80,7 @@ function buildMenu(): void {
 }
 
 app.whenReady().then(() => {
+  registerLocalResourceProtocol()
   registerIpcHandlers()
   onWindowsChange(() => buildMenu())
   buildMenu()

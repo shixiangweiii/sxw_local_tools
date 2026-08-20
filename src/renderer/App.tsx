@@ -1,4 +1,4 @@
-import { Suspense, startTransition, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store'
 import { Toolbar } from './components/Toolbar'
 import { SplitPanel } from './components/SplitPanel'
@@ -10,6 +10,7 @@ import { TocSidebar } from './components/markdown/TocSidebar'
 import { HtmlSanitizedView } from './components/html/HtmlSanitizedView'
 import { formatBytes, pickStrategy } from './components/markdown/perfThresholds'
 import type { HeadingItem } from './utils/tocParser'
+import { dirname } from './utils/resolveImageUrl'
 import { useJsonWorker } from './hooks/useJsonWorker'
 import { sanitizeHtml } from './utils/htmlSanitize'
 
@@ -296,6 +297,12 @@ function MarkdownTextSubscriber(): JSX.Element {
   const commitMarkdownPreview = useStore((s) => s.commitMarkdownPreview)
   const isTocVisible = useStore((s) => s.isTocVisible)
   const markdownByteLength = useStore((s) => s.markdownByteLength)
+  // markdown 文件所在目录：相对路径图片的解析基准
+  const markdownFilePath = useStore((s) => s.filePathByMode.markdown)
+  const baseDir = useMemo(
+    () => (markdownFilePath ? dirname(markdownFilePath) : null),
+    [markdownFilePath]
+  )
   const strategy = pickStrategy(markdownByteLength)
   const [headings, setHeadings] = useState<HeadingItem[]>([])
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null)
@@ -344,7 +351,7 @@ function MarkdownTextSubscriber(): JSX.Element {
         <TocSidebar headings={headings} scrollContainer={scrollContainer} />
       )}
       <div className="flex-1 overflow-hidden" ref={setScrollContainer}>
-        <MarkdownPreview text={markdownPreviewText} onHeadingsChange={handleHeadingsChange} />
+        <MarkdownPreview text={markdownPreviewText} baseDir={baseDir} onHeadingsChange={handleHeadingsChange} />
       </div>
     </div>
   )

@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight'
 import type { Components } from 'react-markdown'
 import { MermaidBlock } from './MermaidBlock'
 import { createHeadingCollector, type HeadingItem } from '../../utils/tocParser'
+import { resolveImageSrc } from '../../utils/resolveImageUrl'
 import 'highlight.js/styles/github.css'
 
 // 模块级稳定引用，避免每次渲染都新建数组导致 react-markdown 内部 effect 失效
@@ -12,6 +13,8 @@ const REHYPE_PLUGINS = [rehypeHighlight]
 
 interface MarkdownPreviewImplProps {
   text: string
+  /** markdown 文件所在目录，用于解析相对路径图片；null 表示无文件上下文 */
+  baseDir: string | null
   onHeadingsChange: (headings: HeadingItem[]) => void
 }
 
@@ -89,24 +92,65 @@ function LazyTableInner({ thead, allRows }: { thead: ReactNode; allRows: ReactNo
 }
 
 /**
- * 自定义 code 渲染：拦截 ```mermaid 代码块，其余交给 rehype-highlight 默认渲染。
- * 标题锚点由 remark heading collector 直接写入 AST。
+ * 本地/web 图片统一渲染：lazy 加载 + 加载失败占位符。
+ * 失败场景：本地文件不存在、web 图挂掉、无 baseDir 的相对路径。
  */
-const components: Components = {
-  table: LazyTable,
-  code({ className, children, ...rest }) {
-    const match = /language-([\w-]+)/.exec(className ?? '')
-    const lang = match?.[1]
-    const raw = String(children ?? '').replace(/\n$/, '')
+function MarkdownImage({
+  src,
+  alt,
+  title,
+  baseDir
+}: {
+  src?: string
+  alt?: string
+  title?: string
+  baseDir: string | null
+}): JSX.Element {
+  const resolved = resolveImageSrc(src ?? '', baseDir)
+  const [failed, setFailed] = useState(false)
 
-    if (lang === 'mermaid') {
-      return <MermaidBlock code={raw} />
-    }
+  if (!resolved || failed) {
     return (
-      <code className={className} {...rest}>
-        {children}
-      </code>
+      <span className="inline-flex flex-col items-center gap-1 my-2 px-4 py-3 rounded border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-xs text-gray-400">
+        <span>🖼️ 图片无法加载</span>
+        {alt ? <span className="max-w-[300px] truncate">{alt}</span> : null}
+        {src && !alt ? <span className="max-w-[300px] truncate">{src}</span> : null}
+      </span>
     )
+  }
+
+  return (
+    <img
+      src={resolved}
+      alt={alt ?? ''}
+      title={title}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
+function createComponents(baseDir: string | null): Components {
+  return {
+    table: LazyTable,
+    img: ({ src, alt, title }) => (
+      // key 绑定解析结果：src 修改后强制重挂载，避免 failed 状态残留导致新图片仍显示占位符
+      <MarkdownImage key={resolveImageSrc(src ?? '', baseDir)} src={src} alt={alt} title={title} baseDir={baseDir} />
+    ),
+    code({ className, children, ...rest }) {
+      const match = /language-([\w-]+)/.exec(className ?? '')
+      const lang = match?.[1]
+      const raw = String(children ?? '').replace(/\n$/, '')
+
+      if (lang === 'mermaid') {
+        return <MermaidBlock code={raw} />
+      }
+      return (
+        <code className={className} {...rest}>
+          {children}
+        </code>
+      )
+    }
   }
 }
 
@@ -117,7 +161,7 @@ const components: Components = {
  * - 顶部"渲染中"条状提示让用户感知后台进度
  * - React.memo 包裹整个组件，prop 等值即跳过
  */
-function MarkdownPreviewImpl({ text, onHeadingsChange }: MarkdownPreviewImplProps): JSX.Element {
+function MarkdownPreviewImpl({ text, baseDir, onHeadingsChange }: MarkdownPreviewImplProps): JSX.Element {
   const deferred = useDeferredValue(text)
   const isPending = deferred !== text
   const headingCollector = useMemo(() => createHeadingCollector(), [deferred])
@@ -125,6 +169,8 @@ function MarkdownPreviewImpl({ text, onHeadingsChange }: MarkdownPreviewImplProp
     () => [remarkGfm, headingCollector.plugin],
     [headingCollector]
   )
+  // baseDir 不变时保持 components 引用稳定，避免 react-markdown 整树重渲染
+  const components = useMemo(() => createComponents(baseDir), [baseDir])
 
   // ReactMarkdown 已同步完成本轮 AST 转换；提交后再把同一批标题交给 TOC。
   useEffect(() => {
