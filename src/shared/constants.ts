@@ -4,6 +4,7 @@ export const LOCAL_RESOURCE_SCHEME = 'local-resource'
 export const IPC_CHANNELS = {
   FILE_OPEN: 'file:open',
   FILE_SAVE: 'file:save',
+  FILE_READ: 'file:read-current',
   WINDOW_NEW: 'window:new',
   WINDOW_SET_TITLE: 'window:set-title',
   WINDOW_GET_INIT_CONFIG: 'window:get-init-config'

@@ -6,6 +6,9 @@ interface ElectronFileFilter {
 interface ElectronAPI {
   openFile: (filters?: ElectronFileFilter[]) => Promise<{ path: string; content: string } | null>
   saveFile: (content: string, filters?: ElectronFileFilter[]) => Promise<{ path: string } | null>
+  readCurrentFile: () => Promise<
+    { path: string; content: string } | { error: 'unbound' | 'not_found' | 'read_failed' }
+  >
   newWindow: (config?: { theme: string; editorMode: string }) => Promise<void>
   setWindowTitle: (source: { filePath: string | null; theme: string; editorMode: string }) => Promise<void>
   getInitConfig: () => Promise<{ windowNumber: number; theme?: string; editorMode?: string }>

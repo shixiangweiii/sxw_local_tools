@@ -25,6 +25,7 @@ export const createUiSlice: StateCreator<StoreState, [['zustand/subscribeWithSel
   editorMode: 'json',
   filePathByMode: { json: null, markdown: null, html: null },
   markdownText: '',
+  markdownBaselineText: '',
   markdownPreviewText: '',
   markdownPreviewCommittedAt: 0,
   markdownByteLength: 0,
@@ -72,6 +73,7 @@ export const createUiSlice: StateCreator<StoreState, [['zustand/subscribeWithSel
     })),
   setWindowNumber: (num) => set({ windowNumber: num }),
   setMarkdownText: (text) => set({ markdownText: text, markdownByteLength: getByteLength(text) }),
+  setMarkdownBaseline: (text) => set({ markdownBaselineText: text }),
   commitMarkdownPreview: () =>
     set((state) => ({
       markdownPreviewText: state.markdownText,

@@ -3,6 +3,7 @@ import Editor, { type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useStore } from '../../store'
 import { PASTE_WARN_LIMIT, formatBytes } from '../markdown/perfThresholds'
+import { registerMarkdownFlush } from './editorFlush'
 
 interface MonacoEditorProps {
   language: 'json' | 'markdown' | 'html'
@@ -22,11 +23,35 @@ export function MonacoEditor({ language, mode, onContentChange }: MonacoEditorPr
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isUpdatingFromExternal = useRef(false)
   const modeRef = useRef(mode)
+  const onContentChangeRef = useRef(onContentChange)
+  onContentChangeRef.current = onContentChange
 
-  // Keep modeRef in sync so onDidPaste closure reads latest mode
+  // modeRef 在下方模式切换 effect 末尾更新，离开 Markdown 时才能读到旧模式。
+
+  // 只在 Markdown 且防抖还没触发时读编辑器。先读出文本再清定时器，读失败则保留定时器。
   useEffect(() => {
-    modeRef.current = mode
-  }, [mode])
+    const flush = (): void => {
+      if (modeRef.current !== 'markdown' || !debounceRef.current) return
+      const editor = editorRef.current
+      if (!editor) return
+      let value: string
+      try {
+        value = editor.getValue()
+      } catch {
+        return
+      }
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+      if (value !== useStore.getState().markdownText) {
+        onContentChangeRef.current(value)
+      }
+    }
+    registerMarkdownFlush(flush)
+    return () => {
+      flush()
+      registerMarkdownFlush(null)
+    }
+  }, [])
 
   // Dynamic debounce based on file size (Task 6)
   const debounceTime = useMemo(() => {
@@ -62,6 +87,17 @@ export function MonacoEditor({ language, mode, onContentChange }: MonacoEditorPr
 
   const handleMount: OnMount = useCallback((ed) => {
     editorRef.current = ed
+    // Monaco 可能晚于 store 就绪，挂载时把已有文本填进去
+    const state = useStore.getState()
+    const next =
+      modeRef.current === 'json' ? state.rawText : modeRef.current === 'markdown' ? state.markdownText : state.htmlText
+    if (ed.getValue() !== next) {
+      isUpdatingFromExternal.current = true
+      ed.setValue(next)
+      requestAnimationFrame(() => {
+        isUpdatingFromExternal.current = false
+      })
+    }
     ed.focus()
 
     // Paste size warning: only meaningful in markdown mode
@@ -87,9 +123,11 @@ export function MonacoEditor({ language, mode, onContentChange }: MonacoEditorPr
       if (value === undefined) return
 
       if (debounceRef.current) clearTimeout(debounceRef.current)
-      debounceRef.current = setTimeout(() => {
+      const timer = setTimeout(() => {
+        if (debounceRef.current === timer) debounceRef.current = null
         onContentChange(value)
       }, debounceTime)
+      debounceRef.current = timer
     },
     [onContentChange, debounceTime]
   )
@@ -117,8 +155,13 @@ export function MonacoEditor({ language, mode, onContentChange }: MonacoEditorPr
             }
           }
         } else if (curr.editorMode === 'markdown') {
-          // markdown mode: external markdownText change (e.g. open file)
+          // markdown mode: external markdownText change (e.g. open file, reload)
           if (curr.markdownText !== prev.markdownText) {
+            // 先取消尚未触发的防抖，避免旧文本在 setValue 之后写回 store
+            if (debounceRef.current) {
+              clearTimeout(debounceRef.current)
+              debounceRef.current = null
+            }
             if (editorRef.current.getValue() !== curr.markdownText) {
               isUpdatingFromExternal.current = true
               editorRef.current.setValue(curr.markdownText)
@@ -152,12 +195,27 @@ export function MonacoEditor({ language, mode, onContentChange }: MonacoEditorPr
     return unsub
   }, [])
 
-  // Mode switch guard: flush pending debounce, swap editor content from store
+  // 离开 Markdown 前先把未落库文本写入 store，再换成目标模式的缓冲
   useEffect(() => {
-    if (debounceRef.current) {
+    const previousMode = modeRef.current
+    const editor = editorRef.current
+    if (debounceRef.current && editor && previousMode === 'markdown' && previousMode !== mode) {
+      let value: string | undefined
+      try {
+        value = editor.getValue()
+      } catch {
+        value = undefined
+      }
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+      if (value !== undefined && value !== useStore.getState().markdownText) {
+        useStore.getState().setMarkdownText(value)
+      }
+    } else if (debounceRef.current) {
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    modeRef.current = mode
     if (!editorRef.current) return
     const state = useStore.getState()
     const next =

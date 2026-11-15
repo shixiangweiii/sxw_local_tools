@@ -132,6 +132,7 @@ function App(): JSX.Element {
       if (!result) return
       // 放在 startTransition 之外，避免标题更新被延后
       useStore.getState().setFilePath(result.path)
+      useStore.getState().setMarkdownBaseline(result.content)
       startTransition(() => {
         useStore.getState().setMarkdownText(result.content)
       })
@@ -251,34 +252,30 @@ function App(): JSX.Element {
       <Toolbar onFormat={handleFormat} onMinify={handleMinify} onValidate={handleValidate} onOpen={handleOpen} />
 
       <div className="flex-1 overflow-hidden">
-        {isPreviewFullscreen && isMarkdown ? (
-          // 全屏模式：仅渲染预览面板
-          markdownPanel
-        ) : (
-          <SplitPanel
-            left={
-              <MonacoEditor
-                language={editorLanguage}
-                mode={editorMode}
-                onContentChange={handleEditorChange}
-              />
-            }
-            right={
-              isMarkdown ? (
-                markdownPanel
-              ) : isHtml ? (
-                <HtmlSanitizedView />
-              ) : (
-                <div className="h-full flex flex-col">
-                  <SearchBar />
-                  <div className="flex-1 overflow-hidden">
-                    <TreeView onTreeChange={handleTreeChange} />
-                  </div>
+        <SplitPanel
+          leftVisible={!(isPreviewFullscreen && isMarkdown)}
+          left={
+            <MonacoEditor
+              language={editorLanguage}
+              mode={editorMode}
+              onContentChange={handleEditorChange}
+            />
+          }
+          right={
+            isMarkdown ? (
+              markdownPanel
+            ) : isHtml ? (
+              <HtmlSanitizedView />
+            ) : (
+              <div className="h-full flex flex-col">
+                <SearchBar />
+                <div className="flex-1 overflow-hidden">
+                  <TreeView onTreeChange={handleTreeChange} />
                 </div>
-              )
-            }
-          />
-        )}
+              </div>
+            )
+          }
+        />
       </div>
 
       <Toast />

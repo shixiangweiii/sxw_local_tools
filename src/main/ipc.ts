@@ -3,7 +3,13 @@ import type { FileFilter } from 'electron'
 import { readFile, writeFile } from 'fs/promises'
 import { IPC_CHANNELS } from '../shared/constants'
 import { createWindow, consumePendingConfig } from './window'
-import { setWindowFilePath, updateWindowConfig, getFocusedWindowConfig, getWindowNumber } from './windowManager'
+import {
+  setWindowFilePath,
+  getWindowFilePath,
+  updateWindowConfig,
+  getFocusedWindowConfig,
+  getWindowNumber
+} from './windowManager'
 
 const DEFAULT_JSON_FILTERS: FileFilter[] = [{ name: 'JSON', extensions: ['json'] }]
 
@@ -17,6 +23,22 @@ export function registerIpcHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) return null
     const content = await readFile(result.filePaths[0], 'utf-8')
     return { path: result.filePaths[0], content }
+  })
+
+  // 只读本窗口已记录的路径，不接受渲染进程传入的路径
+  ipcMain.handle(IPC_CHANNELS.FILE_READ, async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return { error: 'unbound' as const }
+    const filePath = getWindowFilePath(win.id)
+    if (!filePath) return { error: 'unbound' as const }
+    try {
+      const content = await readFile(filePath, 'utf-8')
+      return { path: filePath, content }
+    } catch (err) {
+      const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : ''
+      if (code === 'ENOENT') return { error: 'not_found' as const }
+      return { error: 'read_failed' as const }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.FILE_SAVE, async (event, content: string, filters?: FileFilter[]) => {

@@ -77,6 +77,10 @@ export function setWindowFilePath(winId: number, filePath: string | null): void 
   recomputeAllTitles()
 }
 
+export function getWindowFilePath(winId: number): string | null {
+  return windows.get(winId)?.filePath ?? null
+}
+
 export function updateWindowConfig(winId: number, config: Partial<WindowConfig>): void {
   const entry = windows.get(winId)
   if (entry) Object.assign(entry.config, config)

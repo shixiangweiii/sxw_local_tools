@@ -7,6 +7,9 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.FILE_OPEN, filters),
   saveFile: (content: string, filters?: FileFilter[]): Promise<{ path: string } | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.FILE_SAVE, content, filters),
+  readCurrentFile: (): Promise<
+    { path: string; content: string } | { error: 'unbound' | 'not_found' | 'read_failed' }
+  > => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ),
   newWindow: (config?: { theme: string; editorMode: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.WINDOW_NEW, config),
   setWindowTitle: (source: { filePath: string | null; theme: string; editorMode: string }): Promise<void> =>

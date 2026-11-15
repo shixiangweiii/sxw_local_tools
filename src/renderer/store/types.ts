@@ -61,6 +61,8 @@ export interface UiSlice {
   // 各模式的文本缓冲彼此独立，文件路径也必须按模式隔离
   filePathByMode: { json: string | null; markdown: string | null; html: string | null }
   markdownText: string
+  /** 上次从磁盘打开、保存或重新加载后的 Markdown 文本，用来判断有没有本地修改 */
+  markdownBaselineText: string
   markdownPreviewText: string
   markdownPreviewCommittedAt: number
   markdownByteLength: number
@@ -82,6 +84,7 @@ export interface UiSlice {
   setFilePath: (path: string | null) => void
   setWindowNumber: (num: number) => void
   setMarkdownText: (text: string) => void
+  setMarkdownBaseline: (text: string) => void
   commitMarkdownPreview: () => void
   setHtmlText: (text: string) => void
   setHtmlSanitizedText: (text: string) => void
